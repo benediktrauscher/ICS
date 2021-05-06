@@ -1,0 +1,223 @@
+---
+title: "Identifying mitotic phases from image sorting data"
+author: "Benedikt Rauscher"
+date: "`r Sys.Date()`"
+output: BiocStyle::html_document
+vignette: >
+  %\VignetteIndexEntry{Classification of mitotic phases}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results='hide', warning=F, message=F)
+```
+
+# Dependencies
+
+```{r}
+library(uwot)
+library(caret)
+library(ComplexHeatmap)
+library(reshape2)
+library(tidyverse)
+library(cowplot)
+```
+
+Set cowplot theme for plotting.
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+Define function namespace.
+
+```{r}
+filter <- dplyr::filter
+select <- dplyr::select
+rename <- dplyr::rename
+```
+
+# Analysis of annotated images
+
+We manually annotated a total of 100 images for each of the cell cycle phases. The goal of this analysis is to find out which features explain the different phases and how well they can be distinguished by machine learning methods.
+
+We first load the data from disk.
+
+```{r}
+data('mitotic_phases', package = 'ICS2021')
+```
+
+We can visualize the distribution of each feature to examine how they vary by mitotic phase.
+
+```{r}
+## check feature distributions for different phases
+mitotic_phases %>% ggplot(aes(z, color = phase)) + 
+  geom_density() + 
+  facet_wrap(~feature, scales = 'free_y')
+```
+
+There seem to be clear differences separating the groups for some of the parameters. I create a heatmap based on the z-score distributions to investigate. We can summarize the distributions by creating a heatmap of median values.
+
+```{r}
+## use median feature value for aggregation
+feature_mat <- mitotic_phases %>%
+  acast(feature ~ phase, value.var = 'z', fun.aggregate = median)
+
+## heatmap
+Heatmap(feature_mat)
+```
+
+## Dimensionality reduction and clustering
+
+We can cluster the labeled cells using an unsupervised dimensionality reduction method like UMAP. If the features are informative then the mitotic phases should be separated in the UMAP plot.
+
+```{r}
+## data frame containing the normalized data
+data_norm <- mitotic_phases %>% select(-val) %>% 
+  pivot_wider(names_from = 'feature', values_from = 'z')
+
+## remember row annotations and remove metadata columns
+labels <- data_norm$phase
+image_ids <- data_norm$imageid
+data_norm <- data_norm[,!colnames(data_norm) %in% c('imageid', 'phase', 'cell_nr')]
+
+## run umap on subset of the cells (10,000)
+set.seed(1234)
+umap_res <- umap(data_norm)
+  
+## add metadata for umap dimensions
+umap_res <- as_tibble(umap_res) %>% mutate(phase = labels, image_id = image_ids)
+
+## visualize
+umap_res %>% ggplot(aes(V1, V2, color = phase)) + geom_point() +
+  xlab('UMAP 1') + ylab('UMAP 2')
+```
+
+### Decision tree
+
+Can we create a decision tree to classify the cells based on their cell cycle phase? We define a function that can fit a decision tree on a training data set (70% of all cells) using 10x cross-validation. For tree fitting we use the 'rpart2' method implemented in the 'caret' package.
+
+```{r}
+set.seed(123)
+
+## exclude -h and -w parameters (-a is more commonly used and
+## they are highly correlated)
+data_ml <- mitotic_phases %>% select(-z) %>% 
+  pivot_wider(names_from = 'feature', values_from = 'val')
+data_ml <- data_ml[,!grepl('-H|-W', colnames(data_ml))]
+
+## function for fitting trees
+fit_tree <- function(df, params){
+  ## select parameters
+  df <- df[,colnames(df) %in% c('phase', params)]
+  
+  ## fix feature names (exclude special characters)
+  colnames(df) <- make.names(colnames(df))
+  
+  ## split into training and test set (80-20)
+  idx <- createDataPartition(df$phase, p = 0.7)[[1]]
+  training <- df[idx,]
+  
+  ## learn model, 10x CV
+  control <- trainControl(method = 'repeatedcv', number = 10, repeats = 3, savePredictions = T)
+  model <- train(
+    phase ~ ., 
+    data = training,
+    method = 'rpart2',
+    trControl = control
+  )
+  return(list(model = model, index = idx, df = df))
+}
+
+## fit tree for selected parameter set
+model <- fit_tree(data_ml, colnames(data_ml)[-c(1, 2, 3)])
+
+## visualize the resulting trees
+rattle::fancyRpartPlot(model$model$finalModel, cex = .75)
+```
+
+The results suggest that the different phases can be nicely separated.
+
+To evaluate the model we generate a confusion matrix based on the 30% cells that were not used for training the model.
+
+```{r}
+make_confusion_matrix <- function(tree_obj){
+  ## get test data (all labeled cells not used for training)
+  test_set <- tree_obj$df[-tree_obj$index,]
+    
+  ## predict classes for test data 
+  pred <- predict(tree_obj$model, test_set)
+    
+  ## generate confusion matrix
+  conf_mat <- confusionMatrix(data = pred,
+                  reference = factor(test_set$phase,
+                                     levels = levels(pred))) 
+}
+
+## get performance metrics
+conf_mat <- make_confusion_matrix(model)
+
+## visualize
+conf_mat$byClass %>% as_tibble(rownames = 'phase') %>% 
+  select(phase, Sensitivity, Specificity) %>% 
+  pivot_longer(names_to = 'metric', values_to = 'val',
+               Sensitivity:Specificity) %>% 
+  ggplot(aes(phase, val, fill = metric)) + 
+  geom_bar(stat = 'identity', position = 'dodge') +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This shows that we can sort each cell cycle phase with high sensitivity and specificity.
+
+Finally, we can analyze variable importance based on the tree model to see if other parameters (potentially correlated) could have been used for predictions.
+
+```{r}
+varImp(model$model)$importance %>%
+  as_tibble(rownames = 'feature') %>%
+  arrange(desc(Overall)) %>% 
+  mutate(feature = factor(feature, levels = rev(feature))) %>% 
+  ggplot(aes(feature, Overall)) + 
+  geom_bar(stat = 'identity') + 
+  ylab('feature importance') + 
+  scale_y_continuous(expand = c(0, 0)) +
+  coord_flip()
+
+## heatmap based on impartance > 0
+important_features <- varImp(model$model)$importance %>%
+  as_tibble(rownames = 'feature') %>% 
+  filter(Overall > 0) %>% pull(feature)
+
+## subset feature matrix used for heatmap above
+feature_mat2 <- feature_mat
+rownames(feature_mat2) <- make.names(rownames(feature_mat2))
+feature_mat2 <- feature_mat2[rownames(feature_mat2) %in% important_features,]
+
+## draw heatmap, standardize rows
+Heatmap(t(scale(t(feature_mat2))))
+```
+
+# Sorting cell purity
+
+We create a heatmap that displays the purity of the sorted mitotic phases.
+
+```{r}
+## load purity data (0%-100%)
+data('purity', package = 'ICS2021')
+
+## visualize as heatmap
+cols <- c('#f7fbff','#deebf7','#c6dbef','#9ecae1','#6baed6',
+          '#4292c6','#2171b5','#08519c','#08306b')
+Heatmap(as.matrix(purity), cluster_rows = F, cluster_columns = F,
+        col = colorRampPalette(c(cols))(50),
+        border = '#111111', rect_gp = gpar(col = '#111111'))
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```

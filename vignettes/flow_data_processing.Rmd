@@ -1,0 +1,214 @@
+---
+title: "Processing of BD Vulcan Experiments from FCS/WSP into tables"
+author: Daniel Schraivogel
+date: "`r Sys.Date()`"
+output: BiocStyle::html_document
+vignette: >
+  %\VignetteIndexEntry{Processing of BD Vulcan Experiments from FCS/WSP files.}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+Built with `r getRversion()`.
+
+```{r include=FALSE}
+#Flow specific packages
+library(flowCore) #allows to import FCS files
+library(CytoML) # allows to import xml from FlowJo
+library(flowWorkspace)
+
+#Other packages
+library(tidyverse)
+```
+
+Define data to import:
+
+```{r message=FALSE, include=FALSE}
+#########################################ENTER PATHNAMES HERE##################################################
+wsp <- system.file('extdata', 'FlowJo_file.wsp', package = 'ICS2021')
+fcs <- system.file('extdata', 'HeLa_H2B_100.fcs', package = 'ICS2021')
+path_to_fiji  <- system.file('extdata/images-processed/00000000', package = 'ICS2021')
+
+## Careful: Doesn't work with elliptical gates (gate is found but no cells can be assigned to gate). Only validated for polygon gates so far.
+###############################################################################################################
+```
+<span style="color:red">**The wsp file and project `r paste0(wsp)` was selected as input!**</span>
+
+Import data via flowCore (to have the correct parameters):
+
+```{r include=FALSE}
+fc <- as_tibble(exprs(read.FCS(fcs))) 
+fc <- fc %>% mutate(imageid = paste0("id", sprintf("%0.8d", 0:(dim(fc)[1]-1)))) #Add imageid
+```
+
+Import via flowWorkspace (to include gating information):
+
+1. get wsp (as done so far)
+2. get gates (as done so far)
+3. generate complete_gated (as done so far)
+
+```{r include=FALSE}
+gs  <- flowjo_to_gatingset(open_flowjo_xml(wsp, sample_names_from="sampleNode"), name = 1) #flowWorkspace package
+
+#Extract event table from flowworkspace
+fw <- as_tibble(exprs(gs_pop_get_data(gs)[[1]])) %>% 
+  mutate(imageid = paste0("id", sprintf("%0.8d", 0:(dim(fc)[1]-1)))) #Add imageid
+```
+
+## Explore flowcore workspace with gating information:
+
+How many cells are associated with different gates? 
+
+```{r}
+gs_pop_get_count_fast(gs) #Gating stats from flowWorkspace package
+```
+
+Show gating hierarchy of sample.
+
+```{r echo=FALSE}
+plot(gs) #Show gating hierarchy as figure
+```
+
+These are all the gates present in the gating set:
+
+```{r}
+allnodes <- gs_get_pop_paths(gs, path = "auto") # from flowWorkspace package
+allnodes2 <- gs_get_pop_paths(gs, path = 1)
+allnodes
+```
+
+## Generate event table with gating information
+
+Next, a table is created containing all events, and the gating information added to the events as new parameter columns.
+
+```{r include=FALSE}
+# Get root which are all events
+root <- as_tibble(exprs(gs_pop_get_data(gs, allnodes[1])[[1]])) 
+root <- root %>% mutate(imageid = paste0("id", sprintf("%0.8d", 0:(dim(root)[1]-1))))
+
+# Generate table "test" which contained image id and one column with FALSE/TRUE for each gate in allnodes
+test <- allnodes[-1] %>% lapply(
+  function(x){
+      var <- as_tibble(exprs(gs_pop_get_data(gs, x)[[1]])) %>% 
+      mutate(new = TRUE)
+      
+      var <- left_join(root, var) %>% select(imageid, new) %>% mutate(new = ifelse(is.na(new), FALSE, new))
+      
+      colnames(var)[2] <- x
+      
+      return(var)
+    }
+)
+
+# Reduce
+reduced <- reduce(test, inner_join)
+
+# Check if two events were absolutely identical (this is very unlikely)
+any(duplicated(reduced$imageid))
+
+# Generate complete gated column with the events from flowcore (= correct values) and the gating information from flowworkspace
+complete_gated <- fc %>% left_join(reduced, by = "imageid")
+```
+
+Add file names and paths to table.
+
+```{r}
+#Get tiff file names from images folder, also works if images are in subfolders since recursive is TRUE. 
+tiff_dir <- system.file('extdata/images', package = 'ICS2021')
+files <- list.files(path = tiff_dir, full.names = F, pattern = ".tiff$", recursive = TRUE)
+
+#CAREFUL, REGULAR EXPRESSION MIGHT NOT BE OPTIMAL IN ALL CASES. Currently, it looks for and 8 ({8}) digit number ([0-9]) starting from the end of the string ($).
+image_names <- as_tibble(files) %>% 
+  mutate(imageid = paste0("id", str_extract(str_extract(value, "[0-9]{8}.tiff"), "[0-9]{8}"))) %>% 
+  mutate(path = paste0("../images/", value)) %>% 
+  mutate(abstiffpath = paste0(system.file('extdata', package = 'ICS2021'), "images/", value)) %>% 
+  select(-value)
+
+#Leftjoin to big table "complete_gated"
+complete_gated <- complete_gated %>% left_join(image_names, by = "imageid") 
+```
+
+Plot cell subpopulations for the different populations.
+
+```{r eval=FALSE, include=FALSE}
+complete_gated %>% 
+  ggplot(aes(x = log10(`SSC-A`), y = log10(`FSC-A`))) + 
+  geom_point(alpha = 0.3, size = 0.5) +
+  scale_fill_discrete(limits = c('FALSE', 'TRUE'))
+```
+
+## Some tiff dataset properties (e.g. image size)
+
+```{r, fig.width = 7}
+paths <- list.files(path = system.file('extdata/images/', package = 'ICS2021'), 
+                    full.names = T, pattern = ".tiff$", recursive = TRUE)
+
+#Get filesize measurements for tiff files
+tiffsize <- as_tibble(file.size(paths))
+
+#Generate table with all measurements
+tiffparams <- tibble(Filename = files, filesize = tiffsize$value) %>% 
+  mutate(imageid = paste0("id", str_extract(str_extract(Filename, "[0-9]{8}.tiff"), "[0-9]{8}")))
+tiffparams$filesize <- round(tiffparams$filesize/1000, 0)
+tiffparams <- left_join(tiffparams, complete_gated, by = "imageid")
+
+#Generate stats table
+tiffstats <- tiffparams %>% group_by(filesize) %>% summarise(counts = n())
+tiffstats <- tiffstats %>% mutate(pct = 100*counts/sum(tiffstats$counts))
+
+#Generate file size figure
+filesize_plot <- ggplot(tiffstats, aes(x = filesize, y = pct)) + 
+  geom_bar(stat="identity") +
+  xlab("File size in KB") +
+  ylab("Percentage of events") +
+  coord_flip() +
+  theme_grey(18) 
+
+filesize_plot
+
+#Add tiff size as parameter to complete_gated
+tiffparamsmerge <- tiffparams %>% select("imageid", "filesize")
+colnames(tiffparamsmerge) <- c("imageid", "tiffsizekb")
+complete_gated <- complete_gated %>% left_join(tiffparamsmerge, by = "imageid")
+```
+
+Add jpg paths to table.
+
+```{r}
+if(path_to_fiji == ""){
+  print("No JPG data available.")
+} else {
+  #Check if jpeg files available (are generated in Fiji)
+  jpg_files <- list.files(path = path_to_fiji, full.names = F, pattern = ".jpg$", recursive = TRUE, include.dirs = TRUE)
+
+  #CAREFUL, REGULAR EXPRESSION MIGHT NOT BE OPTIMAL IN ALL CASES. Currently, it looks for and 8 ({8}) digit number ([0-9]) starting from the end of   the string ($).
+  jpg_names <- as_tibble(jpg_files) %>% 
+    mutate(imageid = paste0("id", str_extract(str_extract(value, "[0-9]{8}.jpg"), "[0-9]{8}"))) %>% 
+    mutate(jpgpath = paste0("../", path_to_fiji, "/", value)) %>% 
+    mutate(absjpgpath = paste0(path_to_fiji,  "/", value)) %>% 
+    #mutate(jpgpath = paste0(path_to_fiji, value)) %>% 
+    select(-value)
+
+  #Leftjoin to big table "complete_gated"
+  complete_gated <- complete_gated %>% left_join(jpg_names, by = "imageid")
+}
+```
+
+Polish tables.
+```{r}
+#Delete events without images from complete_gated
+complete_gated <- complete_gated %>%
+  filter(WaveformPresent > 0)
+
+#Generate table for processing in Fiji:
+#Differences:
+#(1)In case not all images were generated by vulcan (e.g. I only selected a subset of images to process), there will be NAs in the path column (although WaveForm is present). Therefore, generate a second smaller table without those NA columns.
+#(2)Skip irrelevant columns to have smaller faster table.
+reduced_gated <- complete_gated %>% 
+  filter(!is.na(path)) %>% 
+  select(c("path", allnodes[-1]))
+
+#complete_gated <- complete_gated %>% mutate(SampleID = unlist(strsplit(dir, "/"))[5])
+```

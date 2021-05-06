@@ -1,0 +1,705 @@
+---
+title: "Analysis of imaging sorting screens with an NFKB focused library"
+author: "Benedikt Rauscher"
+date: "`r Sys.Date()`"
+output: BiocStyle::html_document
+vignette: >
+  %\VignetteIndexEntry{Analysis of imaging sorting screens at varying library coverage with a focused library}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, results='hide', warning=F, message=F)
+```
+
+# Dependencies
+
+```{r}
+library(MAUDE)
+library(ROCR)
+library(reshape2)
+library(progress)
+library(ComplexHeatmap)
+library(tidyverse)
+library(patchwork)
+library(ggrepel)
+library(cowplot)
+```
+
+```{r}
+theme_set(theme_cowplot())
+```
+
+Define function namespace.
+
+```{r}
+rename <- dplyr::rename
+select <- dplyr::select
+filter <- dplyr::filter
+map <- purrr::map
+```
+
+# Data loading
+
+In addition to the genome-wide screen, we performed a number of screens in the same cell line (HeLa) using the same experimental setup but with a smaller library targeting genes relevant to NFKB signaling. These screens were performed at different levels of library coverage (number of sorted cells) with the purpose of testing how much coverage would be required in order to confidently identify hits.
+
+We start by loading the data from these screens.
+
+```{r}
+data('lib_anno_focused', package = 'ICS2021')
+data('raw_counts_focused', package = 'ICS2021')
+```
+
+# Normalization
+
+To account for differences in sequencing depth, we normalize the counts to the median of the (targeting) controls.
+
+```{r}
+## determine normalization factor
+norm_fac <- raw_counts_focused %>%
+  filter(Gene == 'targeting_ctrl') %>% 
+  group_by(condition, sid) %>% 
+  summarise(norm_factor = median(count)) %>%
+  ungroup()
+
+## median count across all samples
+med_count <- median(raw_counts_focused$count)
+
+## normalize counts
+norm_counts <- raw_counts_focused %>% inner_join(norm_fac) %>%
+  group_by(condition, sid) %>%
+  mutate(norm_count = (count * med_count)/norm_factor) %>% 
+  ungroup()
+
+## coverage per gRNA
+norm_counts <- norm_counts %>% mutate(coverage = round(n_cells/length(unique(sgRNA)), 0))
+```
+
+What is the distribution of the normalized counts for each sample? Are there differences?
+
+```{r}
+norm_counts %>% ggplot(aes(norm_count + 1, color = condition)) + 
+  geom_density() + facet_wrap(~sid) + 
+  scale_x_log10(expand = c(0, 0)) + 
+  scale_y_continuous(expand = c(0,0))
+```
+
+The distributions look different for sid2 where we see a considerable difference between the input and the sorted samples. This could indicate an increased amount of random dropouts during sorting when there are only few cells.
+
+# In silico pooling of samples
+
+In order to explore additional degrees of library coverage we generate additional samples by pooling them computationally based on their normalized read counts.
+
+```{r}
+## 720,000 cells, coverage 108
+cov108 <- norm_counts %>% filter(sid %in% c('sid3', 'sid7')) %>% 
+  group_by(condition, sgRNA, Gene) %>% 
+  summarize(norm_count = sum(norm_count), coverage = sum(coverage), n_cells = sum(n_cells)) %>% 
+  ungroup() %>% mutate(type = 'in_silico')
+
+## coverage 155
+cov155 <- norm_counts %>% filter(sid %in% c('sid6', 'sid7', 'sid4')) %>% 
+  group_by(condition, sgRNA, Gene) %>% 
+  summarize(norm_count = sum(norm_count), coverage = sum(coverage), n_cells = sum(n_cells)) %>% 
+  ungroup() %>% mutate(type = 'in_silico')
+
+## combine norm counts, real and in silico
+norm_counts_comb <- norm_counts %>% mutate(type = 'real') %>%
+  bind_rows(cov108) %>% bind_rows(cov155) %>%
+  filter(!sid %in% c('sid5', 'sid8', 'sid9'))
+```
+
+# Fold changes
+
+We calculate log2 fold changes for each sample, comparing gRNA abundance in the sorted cells to the unsorted cells.
+
+```{r}
+## calculate fold changes for upper/lower bins
+fold_changes <- norm_counts_comb %>% mutate(log_count = log(norm_count + 1)) %>% 
+  select(condition, n_cells, coverage, sgRNA, Gene, log_count) %>% 
+  pivot_wider(names_from = 'condition', values_from = 'log_count') %>% 
+  mutate(fc_upper = upper - input, fc_lower = lower - input)
+
+## plot fold changes for different levels of library coverage
+fold_changes %>% select(-c(input, lower, upper)) %>% 
+  pivot_longer(names_to = 'bin', values_to = 'log2fc', fc_upper:fc_lower) %>%
+  ggplot(aes(log2fc, color = as.factor(coverage))) +
+  geom_density() + 
+  geom_vline(xintercept = 0, linetype = 'dashed') +
+  facet_wrap(~bin) + panel_border() +
+  scale_y_continuous(expand = c(0, 0)) 
+```
+
+We further calculate fold changes for all real samples pooled into one large combined sample ('full' coverage).
+
+```{r}
+cov_full <- norm_counts %>% 
+  group_by(condition, Gene, sgRNA) %>%
+  summarise(norm_count = sum(norm_count)) %>% ungroup()
+
+fc_full <- cov_full %>% mutate(log_count = log(norm_count + 1)) %>% 
+  select(condition, sgRNA, Gene, log_count) %>% 
+  pivot_wider(names_from = 'condition', values_from = 'log_count') %>% 
+  mutate(fc_upper = upper - input, fc_lower = lower - input)
+```
+
+# Controls phenotypes
+
+We check the phenotypes of gold standard essential and nonessential genes in order to validate that the gRNAs induce the expected phenotypes.
+
+```{r}
+## published in hart 2017, g3
+data('ce', package = 'ICS2021') # core essential
+data('ne', package = 'ICS2021') # nonessential genes
+
+## visualize normalize count distributions
+norm_counts_ctrl <- norm_counts %>% 
+  filter(Gene %in% c(ce, ne, 'targeting_ctrl', 'nontargeting_ctrl')) %>% 
+  mutate(target_group = ifelse(Gene %in% ce, 'core_essential', 
+                        ifelse(Gene %in% ne, 'nonessential',
+                        ifelse(Gene == 'targeting_ctrl', 
+                               'targeting_ctrl', 'nontargeting_ctrl'))))
+
+
+norm_counts_ctrl %>%
+  ggplot(aes(norm_count + 1, color = target_group)) +
+  geom_density() + 
+  scale_y_continuous(expand = c(0, 0)) + 
+  scale_x_log10(expand = c(0, 0)) + 
+  facet_grid(condition ~ sid) + 
+  panel_border()
+```
+
+We can see the expected dropout of core- and nonessential genes indicating that the screen worked. 
+
+We check counts / fold changes for a few example regulators of NFKB signaling to determine if we see the expected effects in the sorted cell populations.
+
+```{r}
+## or2a1 is a negative control
+example_genes <- c('NFKBIA', 'MAP3K7', 'CHUK', 'IKBKG', 'IKBKB', 'OR2A1', 'TNFRSF1A')
+
+## visualize counts
+norm_counts %>% filter(Gene %in% example_genes) %>% 
+  mutate(condition = relevel(as.factor(condition), 'input')) %>%
+  ggplot(aes(condition, norm_count + 1, color = sid)) + 
+  geom_jitter(width = 0.2) + 
+  stat_summary(fun = 'mean', fun.max = 'mean', fun.min = 'mean', 
+               color = 'black', width = 0.5, geom = 'crossbar') + 
+  scale_y_log10() + facet_wrap(~Gene) + 
+  panel_border() + 
+  ylab('normalized guide count')
+```
+
+# Full dropouts
+
+One of the main differences between samples based on varying cell numbers should be that we start to see increased random dropouts of gRNAs when cell coverage is insufficient. We count the number of guides that are lost completely from each sample.
+
+```{r}
+raw_counts_focused %>% filter(count == 0) %>% count(condition, sid, n_cells) %>% 
+  ggplot(aes(n_cells/1000, n, fill = sid)) + 
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  facet_wrap(~condition) + 
+  panel_border() +
+  ylab('number of lost guides') +
+  xlab('number of cells (in thousand)')
+```
+
+This clearly shows that, as expected, there is a correlation between lower cell numbers and lost guides. 
+
+# Reprduciblity between biological replicates
+
+In order to test the reproducibility of CRISPR screens with imaging sorting we generated four independent experiments at a coverage of 320,000 cells. We perform MAUDE analysis in order to determine how well these replicates correlate.
+
+```{r}
+## list of non-targeting and targeting ctrls to compare against
+nt_ctrls <- norm_counts_ctrl %>% filter(target_group == 'nontargeting_ctrl') %>% pull(sgRNA)
+targ_ctrls <- norm_counts_ctrl %>% filter(target_group == 'targeting_ctrl') %>% pull(sgRNA)
+
+## create input objects for maude
+maude_counts <- norm_counts %>% filter(n_cells == 320000) %>%
+  select(-c(norm_factor, norm_count, Gene, n_cells)) %>% 
+  mutate(count = count + 1) %>% rename(exp = sid) %>%
+  pivot_wider(names_from = condition, values_from = count) %>%
+  mutate(isNontargeting = ifelse(sgRNA %in% targ_ctrls, T, F)) %>%
+  as.data.frame()
+  
+## define bin stats. go with 5% for lower/upper each
+maude_bins <- tibble(Bin = c('upper', 'lower')) %>% 
+  mutate(binStartQ = ifelse(Bin == 'lower', 0.001, 0.950), 
+         binEndQ = ifelse(Bin == 'lower', 0.050, 0.999), 
+         fraction = binEndQ - binStartQ,
+         binStartZ = qnorm(binStartQ),
+         binEndZ = qnorm(binEndQ)) %>% 
+  select(Bin, binStartQ, binEndQ, fraction, binStartZ, binEndZ) %>% 
+  as.data.frame()
+maude_bins <- unique(maude_counts$exp) %>% 
+  map_df(~maude_bins %>% mutate(exp = .x))
+  
+## use maude to calculate guide level statistics.
+set.seed(1234)
+maude_guide_stats <- findGuideHitsAllScreens(
+  experiments = unique(maude_counts['exp']),
+  countDataFrame = maude_counts,
+  binStats = maude_bins,
+  sortBins = c('lower', 'upper'),
+  unsortedBin = 'input',
+  negativeControl = 'isNontargeting'
+) 
+
+## also do gene level stats
+## annotate gene symbol
+maude_guide_stats <- maude_guide_stats %>% as_tibble() %>% 
+  left_join(norm_counts %>% distinct(sgRNA, symbol = Gene)) %>%
+  as.data.frame()
+
+## calculate gene-level summarized scores
+gene_stats_4rep <- getElementwiseStats(
+  experiments = unique(maude_guide_stats['exp']),
+  normNBSummaries = maude_guide_stats,
+  negativeControl = 'isNontargeting',
+  elementIDs = 'symbol'
+)
+```
+
+We can create scatter plots and calculate Pearson's correlation coefficients to compare replicates.
+
+```{r}
+rep_comp <- maude_guide_stats %>% as_tibble() %>% 
+  filter(!grepl('_C_', sgRNA)) %>% select(exp, sgRNA, Z) %>%
+  pivot_wider(names_from = exp, values_from = Z)
+
+GGally::ggpairs(rep_comp %>% select(-sgRNA)) + 
+  panel_border() + 
+  xlab('MAUDE gRNA Z-score') + 
+  ylab('MAUDE gRNA Z-score')
+
+## correlation matrix
+rep_comp %>% as.data.frame() %>%
+  column_to_rownames('sgRNA') %>% 
+  cor(method = 'pearson') %>% 
+  Heatmap(col = circlize::colorRamp2(c(0, 0.5, 1), 
+                                     c('#f7f7f7', '#db4437', '#111111')))
+```
+
+There are some points that are clearly off-diagnoal which seems to indicate replicate specific phenotypes. Which genes are these guides targeting? We select two samples (sid3 and sid5) to illustrate these differences.
+
+```{r}
+rep_comp2 <- rep_comp %>% select(sgRNA, sid3, sid5) %>%
+  left_join(distinct(norm_counts, sgRNA, symbol = Gene)) %>%
+  arrange(desc(abs(sid3 - sid5)))
+
+## highlight this experiment and highlight off-diagonal guides
+off_diag <- rep_comp2 %>% filter(abs(sid3) > 2 | abs(sid5) > 2) %>% slice(1:25)
+
+## create detailed scatter plot
+rep_comp2 %>% ggplot(aes(sid3, sid5)) +
+  geom_point(color = '#cccccc') + 
+  geom_point(data = off_diag, aes(sid3, sid5), color = '#4285f4') + 
+  geom_text_repel(data = off_diag, aes(sid3, sid5, label = symbol),
+                  min.segment.length = 0) + 
+  geom_abline(linetype = 'dashed', color = '#aaaaaa')
+```
+
+All off-diagonal guides are targeting known NFKB regulators so it seems that the signal is missing rather than false in one of the replicates. We check the guide counts for clarification.
+
+```{r}
+norm_counts %>% 
+  filter(sgRNA %in% off_diag$sgRNA, 
+         sid %in% c('sid3', 'sid5')) %>% 
+  ggplot(aes(condition, norm_count + 1, color = sid)) + 
+  geom_jitter(width = 0.1) +
+  facet_wrap(~ sgRNA + Gene, scales = 'free_y') + 
+  scale_y_log10() + panel_border()
+```
+
+What happens a lot here is that guide RNAs are missing completely from one of the bins (usually the right one where they are meant to be depleted). In all cases there is a noticeable difference in dropout/enrichment between the two replicates but the effects always point in the right direction for both replicates.
+
+# Hit calling at varying cell coverage and guide counts
+
+## Reference
+
+We want to find out how well we can do the hit calling at varying guide and cell coverage. To be able to evaluate this we first run a reference analysis on the most powerful sample. We create this artificial sample by combining the counts of all experiments into one combined reference experiment.
+
+```{r}
+## add normalized counts for all samples to artificially boost cell coverage
+combined_counts <- norm_counts %>% group_by(condition, sgRNA) %>% 
+  summarize(combined_count = round(sum(norm_count), 0)) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = condition, values_from = combined_count) %>% 
+  mutate(exp = 'rep1', isNontargeting = ifelse(sgRNA %in% targ_ctrls, T, F)) %>%
+  as.data.frame()
+
+## check tnfrsf1a as an example
+tnf_guides <- norm_counts %>% filter(Gene == 'TNFRSF1A') %>% pull(sgRNA) %>% unique()
+combined_counts %>% filter(sgRNA %in% tnf_guides)
+
+## define bin stats. go with 5% for lower/upper each
+maude_bins <- tibble(Bin = c('upper', 'lower'), exp = 'rep1') %>% 
+  mutate(binStartQ = ifelse(Bin == 'lower', 0.001, 0.950), 
+         binEndQ = ifelse(Bin == 'lower', 0.050, 0.999), 
+         fraction = binEndQ - binStartQ,
+         binStartZ = qnorm(binStartQ),
+         binEndZ = qnorm(binEndQ)) %>% 
+  select(Bin, binStartQ, binEndQ, fraction, binStartZ, binEndZ, exp) %>% 
+  as.data.frame()
+
+## use maude to calculate guide level statistics.
+set.seed(1234)
+maude_combined_stats <- findGuideHitsAllScreens(
+  experiments = unique(combined_counts['exp']),
+  countDataFrame = combined_counts,
+  binStats = maude_bins,
+  sortBins = c('lower', 'upper'),
+  unsortedBin = 'input',
+  negativeControl = 'isNontargeting'
+) 
+
+## annotate gene symbol
+maude_combined_stats <- maude_combined_stats %>% as_tibble() %>% 
+  left_join(norm_counts %>% distinct(sgRNA, symbol = Gene)) %>%
+  as.data.frame()
+
+## calculate gene-level summarized scores
+combined_gene_stats <- getElementwiseStats(
+  experiments = unique(maude_combined_stats['exp']),
+  normNBSummaries = maude_combined_stats,
+  negativeControl = 'isNontargeting',
+  elementIDs = 'symbol'
+)
+## to tibble
+combined_gene_stats <- combined_gene_stats %>% as_tibble() %>% 
+  filter(!symbol %in% c('nontargeting_ctrl', 'targeting_ctrl')) %>% 
+  arrange(p.value)
+```
+
+We can visualize the resulting hit list as a waterfall plot.
+
+```{r}
+## which genes should be labeled
+for_labeling <- c('TNFRSF1A', 'TRADD', 'MAP3K7', 'NFKBIA', 
+                  'RIPK1', 'IKBKB', 'FBXW11', 'SEPHS1',
+                  'CHUK', 'IKBKG', 'TRAF2', 'RBCK1',
+                  'PDPK1', 'TNFAIP3', 'NFKBIB')
+
+## 1% fdr cutoff
+fdr1 <- combined_gene_stats %>% filter(FDR > 0.01) %>% 
+  pull(significanceZ) %>% range()
+
+combined_gene_stats <- combined_gene_stats %>% 
+  arrange(significanceZ) %>% mutate(rank = 1:n())
+combined_gene_stats %>%
+  ggplot(aes(rank, significanceZ)) + 
+  geom_point() + 
+  geom_point(data = filter(combined_gene_stats, significanceZ < 0, FDR < 0.01),
+             aes(rank, significanceZ), color = '#4285f4') +
+  geom_point(data = filter(combined_gene_stats, significanceZ > 0, FDR < 0.01),
+             aes(rank, significanceZ), color = '#db4437') +
+  geom_text_repel(data = filter(combined_gene_stats, symbol %in% for_labeling),
+             aes(rank, significanceZ, label = symbol), min.segment.length = 0) +
+  geom_hline(yintercept = c(fdr1, 0), linetype = 'dashed') +
+  xlab('gene rank') +
+  ylab('statistical significance Z-score (MAUDE)')
+```
+
+We also plot the normalized counts for the highlighted hits for a supplementary figure.
+
+```{r}
+## select best guide for top hits for visualization of counts
+guides_highlight <- maude_combined_stats %>% as_tibble() %>% 
+  group_by(symbol) %>% top_n(1, llRatio) %>% ungroup() %>% 
+  filter(symbol %in% for_labeling) %>% 
+  pull(sgRNA)
+
+norm_counts %>% 
+  filter(sgRNA %in% guides_highlight) %>% 
+  ggplot(aes(condition, norm_count + 1, color = as.factor(coverage))) + 
+  geom_jitter(width = 0.1) +
+  facet_wrap(~  Gene, scales = 'free_y', ncol = 6) + 
+  scale_y_log10() + panel_border()
+```
+
+We show all guide effects for CHUK, MAP3K7, IKBKG.
+
+```{r}
+norm_counts %>% 
+  filter(Gene %in% c('CHUK', 'IKBKG', 'MAP3K7'), !is.na(sid)) %>% 
+  group_by(Gene, sgRNA, condition) %>% 
+  summarize(norm_count = sum(norm_count)) %>% ungroup() %>%
+  inner_join(norm_counts %>% distinct(Gene, sgRNA) %>% 
+               group_by(Gene) %>%
+               mutate(grna_nr = paste('gRNA', 1:n())) %>% ungroup()) %>%
+  ggplot(aes(condition, norm_count + 1, color = grna_nr)) + 
+  geom_jitter(width = 0.1) +
+  facet_wrap(~  Gene, scales = 'free_y', ncol = 1) + 
+  scale_y_log10() + panel_border()
+```
+
+## Downsampling
+
+Next we want to find out how reduced guide and cell counts affect the ability to detect relevant hits.
+
+```{r}
+## create sample table
+sample_tab <- expand.grid(n_cells = norm_counts_comb %>%
+                            pull(n_cells) %>% unique(),
+                          n_guides = 1:6) %>% as_tibble()
+
+## define bin stats. go with 5% for lower/upper each
+maude_bins <- tibble(Bin = c('upper', 'lower'), exp = 'rep1') %>% 
+  mutate(binStartQ = ifelse(Bin == 'lower', 0.001, 0.950), 
+         binEndQ = ifelse(Bin == 'lower', 0.050, 0.999), 
+         fraction = binEndQ - binStartQ,
+         binStartZ = qnorm(binStartQ),
+         binEndZ = qnorm(binEndQ)) %>% 
+  select(Bin, binStartQ, binEndQ, fraction, binStartZ, binEndZ, exp) %>% 
+  as.data.frame()
+```
+
+We run MAUDE to perform hit calling for each of the samples selecting 1-6 guide RNAs. This step takes a while to complete.
+
+```{r, eval = F}
+## run maude for each sample
+set.seed(1234)
+pb <- progress_bar$new(total = nrow(sample_tab))
+maude_results_subsampling <- sample_tab %>% mutate(res = map2(n_cells, n_guides, ~{
+  ## guide sample
+  guides <- lib_anno_focused %>% group_by(symbol) %>% slice(1:.y) %>% pull(sgrna_id)
+  ## add ctrl
+  guides <- c(guides, targ_ctrls, nt_ctrls)
+  
+  ## create input objects for maude
+  maude_counts <- norm_counts_comb %>% 
+    filter(n_cells == .x, sgRNA %in% guides) %>%
+    mutate(count = round(norm_count, 0) + 1, exp = 'rep1') %>%
+    select(-c(norm_factor, norm_count, Gene, n_cells, sid)) %>% 
+    pivot_wider(names_from = condition, values_from = count) %>%
+    mutate(isNontargeting = ifelse(sgRNA %in% targ_ctrls, T, F)) %>%
+    as.data.frame()
+  
+  ## use maude to calculate guide level statistics.
+  maude_guide_stats <- findGuideHitsAllScreens(
+    experiments = unique(maude_counts['exp']),
+    countDataFrame = maude_counts,
+    binStats = maude_bins,
+    sortBins = c('lower', 'upper'),
+    unsortedBin = 'input',
+    negativeControl = 'isNontargeting'
+  ) 
+  
+  ## annotate gene symbol
+  maude_guide_stats <- maude_guide_stats %>% as_tibble() %>% 
+    left_join(norm_counts %>% distinct(sgRNA, symbol = Gene)) %>%
+    as.data.frame()
+
+  ## calculate gene-level summarized scores
+  maude_gene_stats <- getElementwiseStats(
+    experiments = unique(maude_guide_stats['exp']),
+    normNBSummaries = maude_guide_stats,
+    negativeControl = 'isNontargeting',
+    elementIDs = 'symbol'
+  )
+  
+  ## sort by p-value
+  maude_gene_stats <- maude_gene_stats %>% as_tibble() %>%
+    filter(! symbol %in% c('nontargeting_ctrl', 'targeting_ctrl')) %>%
+    arrange(p.value) 
+  
+  pb$tick()
+  
+  return(list(guide_stats = maude_guide_stats, gene_stats = maude_gene_stats))
+}))
+```
+```{r, echo = F, eval = T}
+data('maude_results_subsampling', package = 'ICS2021')
+```
+
+Do the sample correlate?
+
+```{r}
+## extract gene stats for each test
+gene_stats_sampling <- maude_results_subsampling %>% 
+  mutate(gene_stats = map(res, ~ .x$gene_stats)) %>% 
+  select(-res) %>% unnest(gene_stats)
+
+## make correlation matrix based on signficiance
+cor_mat <- gene_stats_sampling %>% 
+  acast(symbol ~ n_guides + n_cells, value.var = 'significanceZ') %>% 
+  cor()
+
+## visualize
+Heatmap(cor_mat)
+```
+
+The correlation matrix suggests that 80,000 cells aren't enough as aren't 1 or 2 guides. It seems that once we have 3 guides and 160,000 cells the results start to become coherent.
+
+We compare the samples by generating a heatmap. This heatmap has a row for each gene that scores with a highly significant p-value (FDR < 0.1%) in at least one of the samples.
+
+```{r}
+## normalize number of cells to library size
+gene_stats_sampling <- gene_stats_sampling %>%
+  left_join(distinct(norm_counts_comb, n_cells, coverage))
+
+## significance matrix
+sig_mat <- gene_stats_sampling %>% 
+  filter(n_guides == 6) %>% 
+  acast(symbol ~ coverage + n_cells, value.var = 'meanZ')
+
+## show genes with significant effect in some sample
+has_phenotype <- gene_stats_sampling %>% filter(n_guides == 6, FDR < 1e-3) %>% 
+  pull(symbol) %>% unique()
+sig_mat <- sig_mat[rownames(sig_mat) %in% has_phenotype,]
+
+## make heatmap
+Heatmap(sig_mat,
+        top_annotation = gene_stats_sampling %>% filter(n_guides == 6) %>%
+          distinct(n_guides, coverage) %>% 
+          arrange(n_guides, coverage) %>% 
+          mutate(sample = paste(n_guides, coverage, sep='_')) %>%
+          as.data.frame() %>% column_to_rownames('sample') %>% 
+          columnAnnotation(df = .),
+        col = circlize::colorRamp2(c(-3, -1, 0, 1),
+                                    c('#3853A4', '#BEA9D1', '#f7f7f7', '#ED1F24')))
+```
+
+This indicates that even at low cell numbers we manage to pick up most of the true NFKB regulators. The problem with lower cell number seems to be false positives rather than false negatives.
+
+We detect a lot of sporadic hits in the low coverage samples. To investigate, we plot the counts.
+
+```{r}
+norm_counts %>% filter(Gene == 'HAPLN3') %>% 
+  ggplot(aes(condition, norm_count, shape = sgRNA)) +
+  geom_point() + 
+  facet_wrap(~coverage) + panel_border()
+```
+
+### Precision recall
+
+Can this be demonstrated using precision-recall-curves if we take the sample with the largest number of cells as a reference?
+
+```{r}
+## ref sample is the combined sample (see above)
+ref_sample <- combined_gene_stats %>% 
+  filter(!symbol %in% c('targeting_ctrl', 'nontargeting_ctrl')) %>% 
+  arrange(symbol)
+
+## total number of guides in lib
+total_guides <- norm_counts %>% pull(sgRNA) %>% unique() %>% length()
+
+## create precision recall curve for other samples
+pr_curves <- gene_stats_sampling %>%
+  mutate(estimated_cell_count = round((n_guides/6) * n_cells, 0),
+         estimated_cov = estimated_cell_count / (total_guides * (n_guides/6)),
+         estimated_cov = round(estimated_cov, 0)) %>%
+  group_by(n_guides, estimated_cov) %>% 
+  arrange(symbol) %>%
+  group_modify(~{
+    stopifnot(identical(ref_sample$symbol, .x$symbol))
+    pred <- prediction(-log10(.x$p.value), 
+                       labels = ifelse(ref_sample$FDR < 0.01, T, F))
+    perf <- performance(pred, measure = 'prec', x.measure = 'rec')
+    return(tibble(prec = perf@y.values[[1]],
+                  rec = perf@x.values[[1]]))
+  }) %>% ungroup()
+
+## visualize
+pr_curves %>% filter(!is.nan(prec)) %>%
+  ggplot(aes(rec, prec, color = as.factor(n_guides))) + 
+  geom_line() + 
+  facet_wrap(~estimated_cov) +
+  ylab('true positive rate') + 
+  xlab('false positive rate') + 
+  panel_border()
+
+## visualize area under the curve values as heatmap
+pr_curves %>% filter(!is.nan(prec)) %>% 
+  group_by(n_guides, estimated_cov) %>% 
+  summarize(auc = pracma::trapz(rec, prec)) %>% ungroup() %>% 
+  acast(n_guides ~ estimated_cov, value.var = 'auc') %>% 
+  Heatmap(cluster_rows = F, cluster_columns = F,
+          col = circlize::colorRamp2(c(0.2, 0.3, 0.5, 0.8),
+                  c('#3853A4', '#BEA9D1', '#f7f7f7', '#ED1F24')))
+```
+
+### Hit calling percentages
+
+As an easy to grasp number we can calculate the fraction of reference sample hits that is identified in each of the sub-samples. 
+
+```{r}
+## hits in reference sample (1% Fdr)
+ref_hits <- ref_sample %>% filter(FDR < 0.01) %>% pull(symbol)
+
+## hits in other samples and overlap with reference
+perc_overlap <- gene_stats_sampling %>% 
+  filter(symbol %in% ref_hits) %>% 
+  group_by(n_guides, coverage) %>%
+  mutate(is_hit = ifelse(FDR < 0.01, T, F)) %>% 
+  summarise(n_total = n(), n_detected = sum(is_hit), 
+            overlap = mean(is_hit)) %>% ungroup()
+
+## visualize as bar plot
+perc_overlap %>% 
+  ggplot(aes(as.factor(coverage), overlap * 100, 
+             fill = as.factor(n_guides))) + 
+  geom_bar(stat = 'identity', position = 'dodge') + 
+  ylab('percentage of reference sample hits detected (FDR < 1%)')
+```
+
+A potential problem with this approach is that although it is easy to understand it makes the results seem worse than they really are since non-overlap is mostly caused by reshuffling of borderline hits based on the selected threshold.
+
+# Correlation with arrayed experiments
+
+As a pre-test for the screen we performed arrayed knockout experiments for selected NFKB regulators. Do the effect sizes we observed in these experiments overlap with the effect sizes in the screen?
+
+We first load and format the arrayed data.
+
+```{r}
+## load data
+data('arrayed_exp', package = 'ICS2021')
+
+## calculate effect sizes
+arrayed_effect_size <- arrayed_exp %>% filter(TNFa) %>% 
+  group_by(Target, gRNA, Dox) %>% summarise(mean_cor = mean(corr)) %>% ungroup() %>%
+  pivot_wider(names_from = Dox, values_from = mean_cor) %>% 
+  mutate(effect_size = `FALSE`-`TRUE`)
+
+## add screen fold changes
+combined_effect_size <- fc_full %>% 
+  filter(Gene %in% c('IKBKG', 'MAP3K7', 'CHUK')) %>%
+  inner_join(lib_anno_focused %>% distinct(sgRNA = sgrna_id, bdimsort_sublib) %>%
+               filter(bdimsort_sublib %in% paste0('bdimsort_', 1:3))) %>%
+  group_by(Gene) %>% 
+  arrange(bdimsort_sublib) %>% mutate(gRNA = 1:n()) %>%
+  ungroup() %>%
+  inner_join(arrayed_effect_size %>% rename(Gene = Target))
+
+## visualize correlation as scatter plot
+p_upper <- combined_effect_size %>% 
+  ggplot(aes(effect_size, fc_upper)) + 
+  geom_point(aes(color = Gene)) + 
+  geom_smooth(method='lm', se = F, color = '#444444') + 
+  ggpubr::stat_cor(label.x = 0.15, label.y = 0) + 
+  ylab('log2 fold change upper bin vs. before sort') + 
+  xlab('(+TNFa -DOX) - (+TNFa +DOX)') +
+  theme(legend.position = 'bottom')
+
+p_lower <- combined_effect_size %>% 
+  ggplot(aes(effect_size, fc_lower)) + 
+  geom_point(aes(color = Gene)) + 
+  geom_smooth(method='lm', se = F, color = '#444444') + 
+  ggpubr::stat_cor(label.x = 0.15, label.y = 0) + 
+  ylab('log2 fold change lower bin vs. before sort') + 
+  xlab('(+TNFa -DOX) - (+TNFa +DOX)') +
+  theme(legend.position = 'none')
+
+p_upper + p_lower + plot_layout(ncol = 1)
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+

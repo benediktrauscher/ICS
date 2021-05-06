@@ -1,0 +1,2 @@
+HeLa H2B-mNeonGreen stained with DyeCycle Green and DAPI
+Images from GFP+ DAPI- singlets were processed into jpegs
