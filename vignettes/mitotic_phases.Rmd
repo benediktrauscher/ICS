@@ -40,6 +40,308 @@ select <- dplyr::select
 rename <- dplyr::rename
 ```
 
+# Characteriztion of ICS parameter properties
+
+## Figure 2A Triplicate measurements Size Ki67
+
+```{r}
+## load data
+data('data_2a', package = 'ICS2021')
+
+## make scaled density plot
+data_2a %>% ggplot(aes(`Size (NFKB FITC)`, color = rep)) + 
+  geom_density(aes(y = ..scaled..)) + 
+  scale_y_continuous(expand = c(0, 0))
+
+## .. and boxplot
+n_group <- data_2a %>% count(rep) %>% pull(n) %>% min()
+data_2a %>% group_by(rep) %>% slice_sample(n = n_group) %>% ungroup() %>% 
+  ggplot(aes(rep, `Size (NFKB FITC)`)) + 
+  geom_boxplot()
+```
+
+## Figure 2B Triplicate measurements RM DyeCycle
+
+```{r}
+## load data
+data('data_2b', package = 'ICS2021')
+
+## plot scaled density
+data_2b %>% select(rep, `Radial Moment (DyeCycle Green FITC)`, `Radial Moment (NFKB FITC)`) %>% 
+  gather(var, value, -rep) %>% filter(!is.na(value)) %>% 
+  ggplot(aes(value, color = rep)) + 
+  geom_density(aes(y = ..scaled..)) +
+  scale_y_continuous(expand = c(0, 0))
+
+## and boxplot
+n_group <- data_2b %>% count(rep) %>% pull(n) %>% min()
+data_2b %>% select(rep, `Radial Moment (DyeCycle Green FITC)`, `Radial Moment (NFKB FITC)`) %>% 
+  gather(var, value, -rep) %>% filter(!is.na(value)) %>% 
+  group_by(rep) %>% slice_sample(n = n_group) %>% ungroup() %>% 
+  ggplot(aes(rep, value)) + 
+  geom_boxplot() 
+```
+
+## Figure 2C Triplicate measurements of Ecc SSC
+
+```{r}
+## load data
+data('data_2c', package = 'ICS2021')
+
+## make scaled density plot for eccentricity
+data_2c %>% ggplot(aes(`Eccentricity (SSC)`, color = rep)) + 
+  geom_density(aes(y = ..scaled..)) + 
+  scale_y_continuous(expand = c(0, 0))
+
+n_group <- data_2c %>% count(rep) %>% pull(n) %>% min()
+data_2c %>% group_by(rep) %>% slice_sample(n = n_group) %>% ungroup() %>% 
+  ggplot(aes(rep, `Eccentricity (SSC)`)) + 
+  geom_boxplot()
+```
+
+## Figures 2D Triplicate measurements of Golgi MI
+
+```{r}
+## load data
+data('data_2d', package = 'ICS2021')
+
+## make scatter plot for Golgi MI
+data_2d %>% ggplot(aes(`MaxIntensity (NFKB FITC)`, `FITC-A`, color = treatment)) + 
+  geom_point() + 
+  facet_wrap(~ rep) + 
+  panel_border() +
+  scale_y_continuous(expand = c(0, 0)) + scale_x_continuous(expand = c(0, 0))
+
+## rep 1 only
+data_2d %>% filter(rep == 'R1') %>%
+  ggplot(aes(`MaxIntensity (NFKB FITC)`, `FITC-A`, color = treatment)) + 
+  geom_point() +
+  scale_y_continuous(expand = c(0, 0)) + scale_x_continuous(expand = c(0, 0))
+
+## box plots
+n_group <- data_2d %>% count(rep, treatment) %>% pull(n) %>% min()
+data_2d %>% select(c(rep, treatment, `MaxIntensity (NFKB FITC)`, `FITC-A`)) %>% 
+  group_by(rep, treatment) %>% slice_sample(n = n_group) %>% ungroup() %>%
+  gather(var, value, -rep, -treatment) %>% 
+  unite(condition, treatment, rep, remove = F) %>% 
+  ggplot(aes(condition, value, fill = treatment)) + 
+  geom_boxplot() + 
+  facet_wrap(~ var, scales = 'free_y', ncol = 1) + panel_border()
+
+# median jitter plots
+data_2d %>% select(c(rep, treatment, `MaxIntensity (NFKB FITC)`, `FITC-A`)) %>% 
+  gather(var, value, -rep, -treatment) %>% 
+  unite(condition, treatment, rep, remove = F) %>% 
+  group_by(condition, rep, treatment, var) %>%
+  summarize(median_val = median(value)) %>% ungroup() %>%
+  ggplot(aes(treatment, median_val)) + 
+  geom_jitter(width = 0.2) + 
+  stat_summary(fun = 'mean', fun.min = 'mean', fun.max = 'mean',
+               color = 'red', geom = 'crossbar', width = 0.2) + 
+  ggsignif::geom_signif(comparisons = list(c('BFA', 'unt')), test = 't.test') +
+  facet_wrap(~ var, scales = 'free_y', nrow = 1) +
+  panel_border()
+
+
+## different shapes for different replicates
+data_2d %>% ggplot(aes(`MaxIntensity (NFKB FITC)`, `FITC-A`, color = treatment)) + 
+  geom_point(aes(shape = rep)) +
+  scale_y_continuous(expand = c(0, 0)) + scale_x_continuous(expand = c(0, 0))
+
+## 2d density plot?
+data_2d %>% ggplot(aes(`MaxIntensity (NFKB FITC)`, `FITC-A`, color = treatment, linetype = rep)) +
+  geom_density_2d() +
+  scale_y_continuous(expand = c(0, 0)) + scale_x_continuous(expand = c(0, 0))
+```
+
+## Figure 2J
+
+We repeated the experiment to determine the overlap between the classification by microscopy and the sorted gate 4 times. In Figure 2J we present a heatmap showing the results for one representative experiment. We also provide visualizations that illustrate the reproducbility between the replicates. 
+
+There are two Excel tables each containing data for two replicates. Telophase is a combination of the columns "telophase", "broken/tiny cell condensed" and "G1/tiny cell decondensed".
+
+```{r}
+## load data
+data('data_2j', package = 'ICS2021')
+data('data_pm', package = 'ICS2021')
+
+## make heatmap for each experiment
+data_2j %>% group_by(sheet, rep) %>% 
+  group_map(~ {
+    mat <- .x %>% as.data.frame() %>% column_to_rownames('stage') %>%
+      as.matrix() %>% t()
+    Heatmap(mat, cluster_rows = F, cluster_columns = F, border = 1,
+            col = circlize::colorRamp2(seq(0, 100, by = 20), 
+                                       c('#ffffff','#9ecae1','#6baed6','#4292c6','#2171b5','#084594')))
+  }) %>% reduce(`+`)
+
+## make a heatmap of average values include 95% ci
+data2j_avg <- data_2j %>% bind_rows(data_pm) %>%
+  pivot_longer(names_to = 'class', values_to = 'purity', -c(stage, rep, sheet)) %>% 
+  mutate(purity = ifelse(is.na(purity), 0, purity)) %>%
+  group_by(stage, sheet, rep) %>% mutate(purity = (purity/sum(purity))*100) %>% ungroup() %>%
+  group_by(stage, class) %>% summarise(ci95 = mean_se(purity, mult = 2)) %>% ungroup()
+data2j_avg <- bind_cols(data2j_avg[,c(1, 2)], data2j_avg$ci95) %>%
+  mutate(stage = factor(stage, levels = c('Interphase', 'Prometaphase', 'Prometaphase 2x', 'Metaphase', 'Anaphase', 'Telophase', 'G2M')),
+         class = factor(class, levels = c('interphase', 'prophase', 'prometaphase', 'metaphase', 'anaphase', 'telophase', 'apoptosis')))
+m1 <- acast(data2j_avg, class ~ stage, value.var = 'y')
+m2 <- acast(data2j_avg, class ~ stage, value.var = 'ymin')
+m3 <- acast(data2j_avg, class ~ stage, value.var = 'ymax')
+
+## draw heatmap
+label_fun = function(j, i, x, y, width, height, fill) {
+  grid.text(sprintf("%.1f [%.1f, %.1f]", m1[i, j], m2[i, j], m3[i, j]), 
+            x, y, gp = gpar(fontsize = 10))
+}
+Heatmap(m1, cluster_rows = F, cluster_columns = F, border = 1,
+        col = circlize::colorRamp2(seq(0, 100, by = 20), 
+          c('#ffffff','#9ecae1','#6baed6','#4292c6','#2171b5','#084594')),
+        cell_fun = label_fun
+)
+
+## visualize reproducibility
+data_2j %>% 
+  pivot_longer(names_to = 'class', values_to = 'perc_purity', -c(stage, rep, sheet)) %>% 
+  ggplot(aes(stage, perc_purity, color = class)) + 
+  geom_jitter(width = 0.1) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Figure S2
+
+```{r}
+## load data
+data('data_supp', package = 'ICS2021')
+
+## only use time point 0 and type "RT" for figure s2 
+data_fs2 <- data_supp %>% filter(time == '0h', type == 'RT')
+```
+
+I make box plots for the features "Correlation (DRAQ5 PerCP / NFKB FITC)", "FITC-A", "FSC-A" and "SSC-A".
+
+```{r}
+set.seed(1234)
+
+manuscript_boxplot <- function(data, feature, ylm){
+  ## number of cells to plot
+  n_cells <- data %>% count(treatment, rep) %>% pull(n) %>% min()
+    
+  ## prepare data
+  df <- data %>% mutate(comp = paste(treatment, rep, sep = '_')) %>%
+    arrange(desc(treatment), rep) %>%
+    mutate(comp = factor(comp, levels = unique(comp))) %>%
+    group_by(comp) %>% slice(1:n_cells) %>% ungroup() 
+  
+  ## boxplots
+  p1 <- df %>% ggplot(aes_string('comp', paste0('`', feature, '`'), fill = 'treatment')) +
+    geom_boxplot(position = 'dodge') +
+    ylim(ylm) +
+    ggtitle(paste('Number of cells:', n_cells))
+  
+  ## compare medians
+  p2 <- df %>% group_by(treatment, rep, comp) %>% 
+    summarize(med = median(get(feature))) %>% ungroup() %>% 
+    mutate(treatment = factor(treatment, levels = c('unt', 'TNF'))) %>% 
+    ggplot(aes(treatment, med)) + 
+    geom_jitter(width = 0.1) + 
+    ggsignif::geom_signif(comparisons = list(c('unt', 'TNF')), test = 't.test') + 
+    ylab(paste(feature, 'median value'))
+  
+  return(list(box = p1, jitter = p2))
+}
+
+## make box plots for each feature
+corr_plots <- manuscript_boxplot(data_fs2, "Correlation (DRAQ5 PerCP / NFKB FITC)", c(-1, 1))
+fitca_plots <- manuscript_boxplot(data_fs2, "FITC-A", c(0, 1.4e08))
+fsca_plots <- manuscript_boxplot(data_fs2, "FSC-A", c(0, 9e07))
+ssca_plots <- manuscript_boxplot(data_fs2, "SSC-A", c(0, 3.5e07))
+```
+
+## Figure 2E
+
+I make a density plot comparing the correlation values between treatments and replicates.
+
+```{r}
+## all replicates
+data_fs2 %>%
+  ggplot(aes(`Correlation (DRAQ5 PerCP / NFKB FITC)`, 
+             color = treatment, linetype = rep)) +
+  geom_density(aes(y = ..scaled..)) + 
+  scale_y_continuous(expand = c(0, 0))
+
+## only replicate 1
+data_fs2 %>% filter(rep == '1') %>%
+  ggplot(aes(`Correlation (DRAQ5 PerCP / NFKB FITC)`, 
+             color = treatment)) +
+  geom_density(aes(y = ..scaled..)) + 
+  scale_y_continuous(expand = c(0, 0))
+```
+
+## Figure S4B Temperature effect on correlation stability
+
+```{r}
+data_supp %>% filter(`Viable single draq5`) %>% 
+  group_by(time, treatment, type, rep) %>% 
+  summarize(median_cor = median(`Correlation (DRAQ5 PerCP / NFKB FITC)`)) %>% 
+  ungroup() %>% unite(group, type, treatment, remove = F) %>% 
+  ggplot(aes(time, median_cor, color = type, group = group)) + 
+  geom_point() + stat_summary(fun = 'mean', geom = 'line')
+```
+
+## Bead sizing experiments
+
+This experiments tests the accuracy of the size paramter as measured by the imaging sorter. Beads of known sizes were processed by the sorter to check if the size parameter correlates with these known sizes.
+
+```{r}
+## load data
+data('beads_data', package = 'ICS2021')
+
+## correlation diameter and size
+beads_data %>% ggplot(aes(`Diameter [µm]`, value)) + 
+  geom_point(aes(color = rep)) + 
+  geom_smooth(se = F, method = 'lm', formula = y ~ x + I(x^2))
+## coefficients for quadratic fit
+lm(value ~ `Diameter [µm]` + I(`Diameter [µm]`^2), data = beads_data)
+
+beads_data %>% ggplot(aes(`Diameter [µm]`, value)) + 
+  geom_point(aes(color = rep)) + geom_smooth(method = 'lm') +
+  ggpubr::stat_cor(method = 'pearson') +
+  scale_y_log10()
+
+## correlation beads area and size
+beads_data %>% ggplot(aes(`Area [µm^2]`, value)) + 
+  geom_point(aes(color = rep)) + geom_smooth(method = 'lm') +
+  ggpubr::stat_cor(method = 'pearson')
+```
+
+## Figure S4D
+
+We create a box plot showing viability before and after sorting over 3 replicates.
+
+```{r}
+## load data
+data('data_fs4', package = 'ICS2021')
+
+## add dapi negative cells
+dapi_negative <- data_fs4 %>% group_by(treatment, rep, condition) %>%
+  summarise(perc_dapi_negative = (sum(live_gfppos)/n()) * 100) %>%
+  ungroup()
+
+## make bar plot?
+dapi_negative %>% 
+  mutate(group = paste(treatment, condition), 
+         group = factor(group, levels = c('untreated PreSort', 'TNFa PreSort', 'TNFa Lower_PostSort', 'TNFa Upper_PostSort'))) %>%
+  ggplot(aes(group, perc_dapi_negative)) + 
+  stat_summary(fun = 'mean', geom = 'bar') +
+  geom_jitter(width = 0.1) + 
+  ggsignif::geom_signif(comparisons = list(c('untreated PreSort', 'TNFa PreSort'),
+                                           c('TNFa PreSort', 'TNFa Lower_PostSort'),
+                                           c('TNFa PreSort', 'TNFa Upper_PostSort')),
+                        step_increase = 0.25, test = 't.test') +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 100)) 
+```
+
+
 # Analysis of annotated images
 
 We manually annotated a total of 100 images for each of the cell cycle phases. The goal of this analysis is to find out which features explain the different phases and how well they can be distinguished by machine learning methods.
@@ -54,7 +356,8 @@ We can visualize the distribution of each feature to examine how they vary by mi
 
 ```{r}
 ## check feature distributions for different phases
-mitotic_phases %>% ggplot(aes(z, color = phase)) + 
+mitotic_phases %>% filter(rep == 'rep2') %>%
+  ggplot(aes(z, color = phase)) + 
   geom_density() + 
   facet_wrap(~feature, scales = 'free_y')
 ```
@@ -64,19 +367,23 @@ There seem to be clear differences separating the groups for some of the paramet
 ```{r}
 ## use median feature value for aggregation
 feature_mat <- mitotic_phases %>%
-  acast(feature ~ phase, value.var = 'z', fun.aggregate = median)
+  mutate(feature = make.names(feature),
+         feature = gsub('H2B.mNeonGreen', '', feature),
+         feature = gsub('\\.\\.\\.', '..', feature)) %>%
+  acast(feature ~ rep + phase, value.var = 'z', fun.aggregate = median)
 
 ## heatmap
 Heatmap(feature_mat)
 ```
 
-## Dimensionality reduction and clustering
+## UMAP
 
 We can cluster the labeled cells using an unsupervised dimensionality reduction method like UMAP. If the features are informative then the mitotic phases should be separated in the UMAP plot.
 
 ```{r}
 ## data frame containing the normalized data
-data_norm <- mitotic_phases %>% select(-val) %>% 
+data_norm <- mitotic_phases %>% filter(rep == 'rep2') %>%
+  select(-val) %>% 
   pivot_wider(names_from = 'feature', values_from = 'z')
 
 ## remember row annotations and remove metadata columns
@@ -96,13 +403,11 @@ umap_res %>% ggplot(aes(V1, V2, color = phase)) + geom_point() +
   xlab('UMAP 1') + ylab('UMAP 2')
 ```
 
-### Decision tree
+## Decision tree
 
 Can we create a decision tree to classify the cells based on their cell cycle phase? We define a function that can fit a decision tree on a training data set (70% of all cells) using 10x cross-validation. For tree fitting we use the 'rpart2' method implemented in the 'caret' package.
 
 ```{r}
-set.seed(123)
-
 ## exclude -h and -w parameters (-a is more commonly used and
 ## they are highly correlated)
 data_ml <- mitotic_phases %>% select(-z) %>% 
@@ -110,14 +415,16 @@ data_ml <- mitotic_phases %>% select(-z) %>%
 data_ml <- data_ml[,!grepl('-H|-W', colnames(data_ml))]
 
 ## function for fitting trees
-fit_tree <- function(df, params){
+fit_tree <- function(df, r, params, classes){
   ## select parameters
+  df <- df %>% filter(phase %in% classes, rep == r)
   df <- df[,colnames(df) %in% c('phase', params)]
+  df <- df[,!apply(df, 2, function(x) any(is.na(x)))]
   
   ## fix feature names (exclude special characters)
   colnames(df) <- make.names(colnames(df))
   
-  ## split into training and test set (80-20)
+  ## split into training and test set (70-30)
   idx <- createDataPartition(df$phase, p = 0.7)[[1]]
   training <- df[idx,]
   
@@ -132,11 +439,23 @@ fit_tree <- function(df, params){
   return(list(model = model, index = idx, df = df))
 }
 
-## fit tree for selected parameter set
-model <- fit_tree(data_ml, colnames(data_ml)[-c(1, 2, 3)])
+## fit tree for both parameter sets
+phases <- c('anaphase', 'telophase', 'prometaphase', 'interphase', 'metaphase')
+models <- list(
+  rep1 = list(r = 'rep1', subset = colnames(data_ml)[-(1:4)], classes = phases),
+  rep2 = list(r = 'rep2', subset = colnames(data_ml)[-(1:4)], classes = phases),
+  rep3 = list(r = 'rep3', subset = colnames(data_ml)[-(1:4)], classes = phases)
+  ) %>% map(~ {
+    fit_tree(data_ml, .x$r, .x$subset, .x$classes) 
+  })
 
 ## visualize the resulting trees
-rattle::fancyRpartPlot(model$model$finalModel, cex = .75)
+rattle::fancyRpartPlot(models$rep1$model$finalModel, cex = .75, 
+                       main = 'Rep 1')
+rattle::fancyRpartPlot(models$rep2$model$finalModel, cex = .75, 
+                       main = 'Rep 2')
+rattle::fancyRpartPlot(models$rep3$model$finalModel, cex = .75, 
+                       main = 'Rep 3')
 ```
 
 The results suggest that the different phases can be nicely separated.
@@ -158,17 +477,41 @@ make_confusion_matrix <- function(tree_obj){
 }
 
 ## get performance metrics
-conf_mat <- make_confusion_matrix(model)
+conf_mat <- models %>% map(make_confusion_matrix)
 
 ## visualize
-conf_mat$byClass %>% as_tibble(rownames = 'phase') %>% 
-  select(phase, Sensitivity, Specificity) %>% 
+perf <- conf_mat %>% map_df(~ .x$byClass %>% as_tibble(rownames = 'phase'), .id = 'rep') %>%
+  select(rep, phase, Sensitivity, Specificity) %>% 
   pivot_longer(names_to = 'metric', values_to = 'val',
-               Sensitivity:Specificity) %>% 
+               Sensitivity:Specificity)
+
+## rename phases so they overlap
+perf <- perf %>% 
+  mutate(phase = gsub('Class: ', '', phase), 
+         phase = ifelse(grepl('oval', phase), 'anaphase', 
+                 ifelse(phase == 'Interphase_Prophase', 'interphase',
+                 ifelse(grepl('arrest', phase), 'prometaphase', phase))), 
+         phase = tolower(phase))
+
+## plot replicates separately
+perf %>% 
   ggplot(aes(phase, val, fill = metric)) + 
   geom_bar(stat = 'identity', position = 'dodge') +
+  facet_wrap(~rep, ncol = 1) + panel_border() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c('#444444', '#aaaaaa')) +
+  ylab('value')
+
+## plot replicates together
+perf %>% 
+  ggplot(aes(phase, val, fill = metric)) + 
+  stat_summary(fun = 'mean', geom = 'bar', position = 'dodge') +
+  geom_point(aes(color = rep, group = metric), 
+             position = position_dodge(width = 1)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   scale_y_continuous(expand = c(0, 0)) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  scale_fill_manual(values = c('#444444', '#aaaaaa')) +
+  ylab('value')
 ```
 
 This shows that we can sort each cell cycle phase with high sensitivity and specificity.
@@ -176,44 +519,63 @@ This shows that we can sort each cell cycle phase with high sensitivity and spec
 Finally, we can analyze variable importance based on the tree model to see if other parameters (potentially correlated) could have been used for predictions.
 
 ```{r}
-varImp(model$model)$importance %>%
-  as_tibble(rownames = 'feature') %>%
-  arrange(desc(Overall)) %>% 
-  mutate(feature = factor(feature, levels = rev(feature))) %>% 
+## parameter subset
+feature_imp <- models %>% map_df(~ {
+  varImp(.x$model)$importance %>%
+    as_tibble(rownames = 'feature') %>%
+    mutate(feature = gsub('H2B.mNeonGreen', '', feature),
+           feature = gsub('\\.\\.\\.', '..', feature)) %>%
+    arrange(desc(Overall)) %>% 
+    mutate(feature = factor(feature, levels = rev(feature)))
+}, .id = 'rep')
+
+feature_imp %>% 
   ggplot(aes(feature, Overall)) + 
-  geom_bar(stat = 'identity') + 
-  ylab('feature importance') + 
+  stat_summary(fun = 'mean', geom = 'bar') +
+  geom_point(aes(color = rep)) +
   scale_y_continuous(expand = c(0, 0)) +
+  ylab('feature importance') + 
   coord_flip()
 
-## heatmap based on impartance > 0
-important_features <- varImp(model$model)$importance %>%
-  as_tibble(rownames = 'feature') %>% 
-  filter(Overall > 0) %>% pull(feature)
+feature_imp %>% 
+  ggplot(aes(feature, Overall)) + 
+  geom_bar(stat = 'identity') +
+  scale_y_continuous(expand = c(0, 0)) +
+  ylab('feature importance') + 
+  coord_flip() + 
+  facet_wrap(~ rep, nrow = 1) + panel_border()
 
-## subset feature matrix used for heatmap above
+## heatmap based on impartance > 0
+important_features <- models %>% map(~ {
+  varImp(.x$model)$importance %>%
+    as_tibble(rownames = 'feature') %>% 
+    filter(Overall > 10) %>% pull(feature)
+}) %>% unlist() %>% unique()
+
 feature_mat2 <- feature_mat
 rownames(feature_mat2) <- make.names(rownames(feature_mat2))
 feature_mat2 <- feature_mat2[rownames(feature_mat2) %in% important_features,]
 
-## draw heatmap, standardize rows
+## heatmap
 Heatmap(t(scale(t(feature_mat2))))
-```
 
-# Sorting cell purity
+## separate replicates
+Heatmap(feature_mat2, 
+        cluster_columns = F,
+        column_split = substr(colnames(feature_mat2), 1, 4))
 
-We create a heatmap that displays the purity of the sorted mitotic phases.
+## heatmap with average values
+feature_mat_avg <- feature_mat2 %>% 
+  as_tibble(rownames = 'feature') %>% 
+  pivot_longer(names_to = 'condition', values_to = 'val', -feature) %>% 
+  separate(condition, c('rep', 'phase')) %>% 
+  group_by(feature, phase) %>% summarize(val = mean(val)) %>% ungroup() %>%
+  acast(feature ~ phase, value.var = 'val')
+## order cols
+feature_mat_avg <- feature_mat_avg[,c('interphase', 'prometaphase', 'metaphase', 'anaphase', 'telophase')]
 
-```{r}
-## load purity data (0%-100%)
-data('purity', package = 'ICS2021')
-
-## visualize as heatmap
-cols <- c('#f7fbff','#deebf7','#c6dbef','#9ecae1','#6baed6',
-          '#4292c6','#2171b5','#08519c','#08306b')
-Heatmap(as.matrix(purity), cluster_rows = F, cluster_columns = F,
-        col = colorRampPalette(c(cols))(50),
-        border = '#111111', rect_gp = gpar(col = '#111111'))
+## heatmap
+Heatmap(t(scale(t(feature_mat_avg))), cluster_columns = F, cluster_rows = F)
 ```
 
 # Session info
