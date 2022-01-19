@@ -1,10 +1,10 @@
-Package: ICS2021
+Package: ICS2022
 Type: Package
-Title: High-throughput imaging-enabled cell sorting
+Title: High-speed fluorescence image-enabled cell sorting
 Version: 0.1.0
 Author: Beendikt Rauscher
 Maintainer: Benedikt Rauscher <benedikt.rauscher@embl.de>
-Description: Supplementary computer code to reproduce the computational analyses presented in the article "High-throughput imaging-enabled cell sorting".
+Description: Supplementary computer code to reproduce the computational analyses presented in the article "High-speed fluorescence image-enabled cell sorting" (Schraivogel et al., 2022, Science).
 License: MIT
 Encoding: UTF-8
 LazyData: true
