@@ -4,7 +4,7 @@ This R package contains documented R markdown files to reproduce data figures in
 
 ## Installation
 
-The package can then be installed using R/devtools. 
+The package can be installed using R/devtools. 
 
 ```{r}
 devtools::install_github('benediktrauscher/ICS', build_vignettes = T)
