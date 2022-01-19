@@ -7,21 +7,13 @@ This R package contains documented R markdown files to reproduce data figures in
 The package can then be installed using R/devtools. 
 
 ```{r}
-devtools::install_github('benediktrauscher/ICS')
-```
-
-or from the command line after cloning the repository:
-
-```{sh}
-git clone https://github.com/benediktrauscher/ICS.git
-R CMD INSTALL ICS
+devtools::install_github('benediktrauscher/ICS', build_vignettes = T)
 ```
 
 To view the analyses in R, type
 
 ```{r}
-library(ICS2022)
-browseVignettes('ICS')
+browseVignettes('ICS2022')
 ```
 
 ## Contact
