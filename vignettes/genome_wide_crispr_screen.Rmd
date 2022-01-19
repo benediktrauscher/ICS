@@ -50,8 +50,8 @@ reduce <- purrr::reduce
 We first load the library annotation file and the raw gRNA counts. The guides were quantified using the MAGeCK count software.
 
 ```{r}
-data('lib_anno_gw', package = 'ICS2021')
-data('raw_counts_gw', package = 'ICS2021')
+data('lib_anno_gw', package = 'ICS2022')
+data('raw_counts_gw', package = 'ICS2022')
 ```
 
 # Library QC
@@ -113,8 +113,8 @@ To validate that the guide RNAs induce the expected on-target phenotypes we chec
 
 ```{r}
 ## published in hart 2017, g3
-data('ce', package = 'ICS2021') # core essentials
-data('ne', package = 'ICS2021') # nonessentials
+data('ce', package = 'ICS2022') # core essentials
+data('ne', package = 'ICS2022') # nonessentials
 
 ## visualize normalize count distributions
 norm_counts_ctrl <- norm_counts %>% 
@@ -372,7 +372,7 @@ maude_guide_stats <- findGuideHitsAllScreens(
 )
 ```
 ```{r, echo = F, eval = T}
-data('maude_guide_stats', package = 'ICS2021')
+data('maude_guide_stats', package = 'ICS2022')
 ```
 
 We inspect the distribution of mean guide expression values for each gene. Most should be at 0 but I expect some deviation for those guides thatd show an effect.
@@ -693,7 +693,7 @@ maude_guide_stats_subset <- map(1:6, ~{
 })
 ```
 ```{r, echo = F, eval = T}
-data('maude_guide_stats_subset', package = 'ICS2021')
+data('maude_guide_stats_subset', package = 'ICS2022')
 ```
 
 We summarize the guide results for each subset to the gene level.
@@ -895,7 +895,7 @@ We first load and format the arrayed data.
 
 ```{r}
 ## load data
-data('arrayed_exp', package = 'ICS2021')
+data('arrayed_exp', package = 'ICS2022')
 
 ## calculate effect sizes
 arrayed_effect_size <- arrayed_exp %>% filter(TNFa) %>% 
@@ -937,9 +937,9 @@ We can see that there is a high correlation between the effect sizes in the arra
 We performed validation experiments for a set of high confidence screen hits. We start by loading the data from disk.
 
 ```{r}
-data('val_data', package = 'ICS2021') # vulcan validation
-data('corr_vals', package = 'ICS2021') # microscopy pbp correlation
-data('ratios', package = 'ICS2021') # microscopy ratios
+data('val_data', package = 'ICS2022') # vulcan validation
+data('corr_vals', package = 'ICS2022') # microscopy pbp correlation
+data('ratios', package = 'ICS2022') # microscopy ratios
 ```
 
 ## Vulcan

@@ -27,9 +27,9 @@ Define data to import:
 
 ```{r message=FALSE, include=FALSE}
 #########################################ENTER PATHNAMES HERE##################################################
-wsp <- system.file('extdata', 'FlowJo_file.wsp', package = 'ICS2021')
-fcs <- system.file('extdata', 'HeLa_H2B_100.fcs', package = 'ICS2021')
-path_to_fiji  <- system.file('extdata/images-processed/00000000', package = 'ICS2021')
+wsp <- system.file('extdata', 'FlowJo_file.wsp', package = 'ICS2022')
+fcs <- system.file('extdata', 'HeLa_H2B_100.fcs', package = 'ICS2022')
+path_to_fiji  <- system.file('extdata/images-processed/00000000', package = 'ICS2022')
 
 ## Careful: Doesn't work with elliptical gates (gate is found but no cells can be assigned to gate). Only validated for polygon gates so far.
 ###############################################################################################################
@@ -116,14 +116,14 @@ Add file names and paths to table.
 
 ```{r}
 #Get tiff file names from images folder, also works if images are in subfolders since recursive is TRUE. 
-tiff_dir <- system.file('extdata/images', package = 'ICS2021')
+tiff_dir <- system.file('extdata/images', package = 'ICS2022')
 files <- list.files(path = tiff_dir, full.names = F, pattern = ".tiff$", recursive = TRUE)
 
 #CAREFUL, REGULAR EXPRESSION MIGHT NOT BE OPTIMAL IN ALL CASES. Currently, it looks for and 8 ({8}) digit number ([0-9]) starting from the end of the string ($).
 image_names <- as_tibble(files) %>% 
   mutate(imageid = paste0("id", str_extract(str_extract(value, "[0-9]{8}.tiff"), "[0-9]{8}"))) %>% 
   mutate(path = paste0("../images/", value)) %>% 
-  mutate(abstiffpath = paste0(system.file('extdata', package = 'ICS2021'), "images/", value)) %>% 
+  mutate(abstiffpath = paste0(system.file('extdata', package = 'ICS2022'), "images/", value)) %>% 
   select(-value)
 
 #Leftjoin to big table "complete_gated"
@@ -142,7 +142,7 @@ complete_gated %>%
 ## Some tiff dataset properties (e.g. image size)
 
 ```{r, fig.width = 7}
-paths <- list.files(path = system.file('extdata/images/', package = 'ICS2021'), 
+paths <- list.files(path = system.file('extdata/images/', package = 'ICS2022'), 
                     full.names = T, pattern = ".tiff$", recursive = TRUE)
 
 #Get filesize measurements for tiff files

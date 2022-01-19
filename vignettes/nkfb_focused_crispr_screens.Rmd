@@ -49,8 +49,8 @@ In addition to the genome-wide screen, we performed a number of screens in the s
 We start by loading the data from these screens.
 
 ```{r}
-data('lib_anno_focused', package = 'ICS2021')
-data('raw_counts_focused', package = 'ICS2021')
+data('lib_anno_focused', package = 'ICS2022')
+data('raw_counts_focused', package = 'ICS2022')
 ```
 
 # Normalization
@@ -152,8 +152,8 @@ We check the phenotypes of gold standard essential and nonessential genes in ord
 
 ```{r}
 ## published in hart 2017, g3
-data('ce', package = 'ICS2021') # core essential
-data('ne', package = 'ICS2021') # nonessential genes
+data('ce', package = 'ICS2022') # core essential
+data('ne', package = 'ICS2022') # nonessential genes
 
 ## visualize normalize count distributions
 norm_counts_ctrl <- norm_counts %>% 
@@ -513,7 +513,7 @@ maude_results_subsampling <- sample_tab %>% mutate(res = map2(n_cells, n_guides,
 }))
 ```
 ```{r, echo = F, eval = T}
-data('maude_results_subsampling', package = 'ICS2021')
+data('maude_results_subsampling', package = 'ICS2022')
 ```
 
 Do the sample correlate?
@@ -657,7 +657,7 @@ We first load and format the arrayed data.
 
 ```{r}
 ## load data
-data('arrayed_exp', package = 'ICS2021')
+data('arrayed_exp', package = 'ICS2022')
 
 ## calculate effect sizes
 arrayed_effect_size <- arrayed_exp %>% filter(TNFa) %>% 

@@ -46,7 +46,7 @@ rename <- dplyr::rename
 
 ```{r}
 ## load data
-data('data_2a', package = 'ICS2021')
+data('data_2a', package = 'ICS2022')
 
 ## make scaled density plot
 data_2a %>% ggplot(aes(`Size (NFKB FITC)`, color = rep)) + 
@@ -64,7 +64,7 @@ data_2a %>% group_by(rep) %>% slice_sample(n = n_group) %>% ungroup() %>%
 
 ```{r}
 ## load data
-data('data_2b', package = 'ICS2021')
+data('data_2b', package = 'ICS2022')
 
 ## plot scaled density
 data_2b %>% select(rep, `Radial Moment (DyeCycle Green FITC)`, `Radial Moment (NFKB FITC)`) %>% 
@@ -86,7 +86,7 @@ data_2b %>% select(rep, `Radial Moment (DyeCycle Green FITC)`, `Radial Moment (N
 
 ```{r}
 ## load data
-data('data_2c', package = 'ICS2021')
+data('data_2c', package = 'ICS2022')
 
 ## make scaled density plot for eccentricity
 data_2c %>% ggplot(aes(`Eccentricity (SSC)`, color = rep)) + 
@@ -103,7 +103,7 @@ data_2c %>% group_by(rep) %>% slice_sample(n = n_group) %>% ungroup() %>%
 
 ```{r}
 ## load data
-data('data_2d', package = 'ICS2021')
+data('data_2d', package = 'ICS2022')
 
 ## make scatter plot for Golgi MI
 data_2d %>% ggplot(aes(`MaxIntensity (NFKB FITC)`, `FITC-A`, color = treatment)) + 
@@ -162,8 +162,8 @@ There are two Excel tables each containing data for two replicates. Telophase is
 
 ```{r}
 ## load data
-data('data_2j', package = 'ICS2021')
-data('data_pm', package = 'ICS2021')
+data('data_2j', package = 'ICS2022')
+data('data_pm', package = 'ICS2022')
 
 ## make heatmap for each experiment
 data_2j %>% group_by(sheet, rep) %>% 
@@ -211,7 +211,7 @@ data_2j %>%
 
 ```{r}
 ## load data
-data('data_supp', package = 'ICS2021')
+data('data_supp', package = 'ICS2022')
 
 ## only use time point 0 and type "RT" for figure s2 
 data_fs2 <- data_supp %>% filter(time == '0h', type == 'RT')
@@ -294,7 +294,7 @@ This experiments tests the accuracy of the size paramter as measured by the imag
 
 ```{r}
 ## load data
-data('beads_data', package = 'ICS2021')
+data('beads_data', package = 'ICS2022')
 
 ## correlation diameter and size
 beads_data %>% ggplot(aes(`Diameter [µm]`, value)) + 
@@ -320,7 +320,7 @@ We create a box plot showing viability before and after sorting over 3 replicate
 
 ```{r}
 ## load data
-data('data_fs4', package = 'ICS2021')
+data('data_fs4', package = 'ICS2022')
 
 ## add dapi negative cells
 dapi_negative <- data_fs4 %>% group_by(treatment, rep, condition) %>%
@@ -349,7 +349,7 @@ We manually annotated a total of 100 images for each of the cell cycle phases. T
 We first load the data from disk.
 
 ```{r}
-data('mitotic_phases', package = 'ICS2021')
+data('mitotic_phases', package = 'ICS2022')
 ```
 
 We can visualize the distribution of each feature to examine how they vary by mitotic phase.
