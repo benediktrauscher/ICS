@@ -1,6 +1,6 @@
 # High-speed fluorescence image-enabled cell sorting
 
-This R package contains documented R markdown files to reproduce data figures in the paper "High-speed fluorescence image-enabled cell sorting" by Schraivogel et al., 2022 (DOI: 10.1126/science.abj3013).
+This R package contains documented R markdown files to reproduce data figures in the paper "High-speed fluorescence image-enabled cell sorting" by [Schraivogel et al., 2022 (DOI: 10.1126/science.abj3013)](https://www.science.org/doi/10.1126/science.abj3013).
 
 ## Installation
 
